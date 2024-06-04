@@ -338,7 +338,6 @@ def apply_traction(player):
     player["x"] += player["xvel"]
     player["y"] += player["yvel"]
 
-# Define the key-to-action mappings
 key_actions = {
     "a": lambda player: player.update({"xvel": player["xvel"] - SPEED}),
     "d": lambda player: player.update({"xvel": player["xvel"] + SPEED}),
