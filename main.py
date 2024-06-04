@@ -235,12 +235,13 @@
 
 # asyncio.get_event_loop().run_until_complete(start_server)
 # asyncio.get_event_loop().run_forever()
-
 import asyncio
 import random
 import websockets
 import math
-import threading, struct,json
+import struct
+import json
+import copy
 
 level = [
     [0, 0, 0, 0, 0, 1, 0, 0, 0],
@@ -262,7 +263,6 @@ class Box:
         self.width = width
         self.height = height
 
-
 # Create boxes based on the level configuration
 boxes = [
     Box(
@@ -276,17 +276,14 @@ boxes = [
     if element == 1
 ]
 
-
 async def handler(websocket, path):
     try:
         async for message in websocket:
-            handleBinary(message, websocket)
-            
+            await handleBinary(message, websocket)
     except Exception as e:
         print(f"Error: {e}")
 
-
-def handleKeypresses(*args, **kwargs):
+async def handleKeypresses(*args, **kwargs):
     keypress = (args[0][0] & 0xF0) >> 4 
     binary_keypress = bin(keypress)[2:].zfill(4) 
     uuid_bytes = args[0][1:5]
@@ -302,31 +299,45 @@ def handleKeypresses(*args, **kwargs):
 
     if not player_exists:
         players.append({"uuid": uuid_bytes,"x": random.randint(10, 1000),"y": random.randint(10, 1000),"lastRequest": 0, "w" : False, "a" : False, "s": False, "d": False, "xvel" : 0, "yvel": 0})
-    
+
+async def handleGetData(*args, **kwargs):
+    player_uuid = args[0][1:5]
+    if player_uuid:
+        copy_of_players = copy.deepcopy(players)
+        for player in copy_of_players:
+            del player["lastRequest"], player["w"], player["a"], player["s"], player["d"], player["xvel"], player["yvel"]
+            player["x"] = round(player["x"], 1)
+            player["y"] = round(player["y"], 1)
+            if player["uuid"] != player_uuid:
+                player["uuid"] = 0
+        
+        await args[1].send(json.dumps({"type": "p", "p": copy_of_players}))
+
 mappings = {
-    3 : handleKeypresses 
+    3: handleKeypresses,
+    15: handleGetData
 }
 
-
-def handleBinary(data, websocket):
+async def handleBinary(data, websocket):
     try:
         data_type = data[0] & 0x0F
         if data_type in mappings:
-            mappings[data_type](data, websocket)
+            await mappings[data_type](data, websocket)
 
     except Exception as e:
-        None
+        print(f"Error handling binary data: {e}")
 
+async def periodic_update():
+    while True:
+        await asyncio.sleep(1/60)  # Adjust the interval as needed
+        updatePlayerVelocities()
 
-def set_interval(func, sec):
-    def func_wrapper():
-        set_interval(func, sec)
-        func()
-    t = threading.Timer(sec, func_wrapper)
-    t.start()
-    return t
-    
-    
+key_actions = {
+    "a": lambda player: player.update({"xvel": player["xvel"] - SPEED}),
+    "d": lambda player: player.update({"xvel": player["xvel"] + SPEED}),
+    "w": lambda player: player.update({"yvel": player["yvel"] - SPEED}),
+    "s": lambda player: player.update({"yvel": player["yvel"] + SPEED}),
+}
 def apply_traction(player):
     player["xvel"] *= 0.8
     player["yvel"] *= 0.8
@@ -338,24 +349,23 @@ def apply_traction(player):
     player["x"] += player["xvel"]
     player["y"] += player["yvel"]
 
-key_actions = {
-    "a": lambda player: player.update({"xvel": player["xvel"] - SPEED}),
-    "d": lambda player: player.update({"xvel": player["xvel"] + SPEED}),
-    "w": lambda player: player.update({"yvel": player["yvel"] - SPEED}),
-    "s": lambda player: player.update({"yvel": player["yvel"] + SPEED}),
-}
-
 def updatePlayerVelocities():
     for player in players:
         for key, action in key_actions.items():
             if player.get(key, False):
                 action(player)
         apply_traction(player)
-        print(player)
-set_interval(updatePlayerVelocities, 1/60)
+
+async def start_server():
+    await websockets.serve(handler, "0.0.0.0", 8000)
+
+async def main():
+    await asyncio.gather(
+        start_server(),
+        periodic_update()
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
-start_server = websockets.serve(handler, "0.0.0.0", 8000)
-
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()

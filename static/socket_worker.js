@@ -4,7 +4,7 @@ const playerUUID = generate4ByteUUID();
 let pingStartTime = 0;
 let ping1 = 0;
 const LEVEL_DATA_TIMEOUT = 5000;
-var fullBinarySend = new Uint8Array(5)
+var fullMoveBinarySend = new Uint8Array(5)
 
 class $BOOLBYTE {
     uint = new Uint8Array(new ArrayBuffer(1))
@@ -55,7 +55,17 @@ function initWebSocket(url) {
 
 function getPlayerData() {
     if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'd', uuid: playerUUID }));
+        var da = new Uint8Array(5)
+        var asd = new $BOOLBYTE();
+        asd.set(0, true)
+        asd.set(1, true)
+        asd.set(2, true)
+        asd.set(3, true)
+        da[0] = asd.uint[0]
+        for (let i = 0; i < playerUUID.length; i++) {
+            da[i + 1] = playerUUID[i];
+        }
+        socket.send(da);
         pingStartTime = Date.now();
     }
 }
@@ -64,13 +74,13 @@ function sendMoveData(moveBinary) {
     try {
         if (socket && socket.readyState === WebSocket.OPEN) {
             if (typeof moveBinary.keypresses === 'number' && moveBinary.keypresses >= 0 && moveBinary.keypresses <= 255) {
-                fullBinarySend[0] = moveBinary.keypresses;
+                fullMoveBinarySend[0] = moveBinary.keypresses;
 
                 for (let i = 0; i < playerUUID.length; i++) {
-                    fullBinarySend[i + 1] = playerUUID[i];
+                    fullMoveBinarySend[i + 1] = playerUUID[i];
                 }
 
-                socket.send(fullBinarySend);
+                socket.send(fullMoveBinarySend);
             } else {
                 console.error("Invalid moveBinary.keypresses value");
             }
