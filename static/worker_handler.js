@@ -5,10 +5,9 @@ export var worker;
 export var playerData, ping1, playerUUID;
 
 var actions = {
-    "data" : (e) => {playerData = e.data; ping1 = e.ping;},
+    "data" : (e) => {playerData = e.data; ping1 = e.ping; handlePlayerCount(e.count)},
     "level" : (e) => {loadLevel(e.level); },
     "uuid" : (e) => {playerUUID = e.uuid},
-    "playerCount" : (e) => {handlePlayerCount(e.count);},
     "keypresses" : (e) => {giveKeypresses()}
 }
 
@@ -35,4 +34,8 @@ export function createWorkerWindowEvents() {
 
 export function giveKeypresses() {
     worker.postMessage({type: "k", k: moveDataBinary.uint[0].toString(2).split("").reverse()})
+}
+
+export function startErUp() {
+    worker.postMessage({type: "g"})
 }

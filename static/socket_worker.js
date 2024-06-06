@@ -1,5 +1,4 @@
 import { $BOOLBYTE } from "./boolbyte.js";
-import { Base64, Base91 } from "./libs/base-ex.esm.min.js"
 let socket;
 const playerUUID = generate4ByteUUID();
 let pingStartTime = 0;
@@ -7,6 +6,7 @@ let ping1 = 0;
 const LEVEL_DATA_TIMEOUT = 5000;
 var fullMoveBinarySend = new Uint8Array(5)
 var keypress = []
+var shouldPoll = false;
 
 postMessage({ type: "uuid", uuid: playerUUID });
 
@@ -28,7 +28,7 @@ function initWebSocket(url) {
         socket.onopen = () => {
             console.log("Opened websocket");
             getPlayerData();
-            getLevelData().then((level) => { postMessage({ type: "level", level: level }); });
+            getLevelData()
         };
 
         socket.onmessage = handleMessages;
@@ -58,6 +58,25 @@ function getPlayerData() {
     }
 }
 
+function getLevelData() {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        var da = new Uint8Array(5);
+        var asd = new $BOOLBYTE();
+
+        asd.toggleToMatch(keypress);
+
+        asd.set(0, true);
+        asd.set(1, true);
+        asd.set(2, true);
+        da[0] = asd.uint[0];
+        for (let i = 0; i < playerUUID.length; i++) {
+            da[i + 1] = playerUUID[i];
+        }
+        socket.send(da);
+        pingStartTime = Date.now();
+    }
+}
+
 function sendMoveData(moveBinary) {
     try {
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -78,47 +97,72 @@ function sendMoveData(moveBinary) {
     }
 }
 
-async function getLevelData() {
-    return await new Promise((resolve, reject) => {
-        if (socket && socket.readyState === socket.OPEN) {
-            socket.send(JSON.stringify({ type: "getLevel" }));
-            const onMessage = event => {
-                const parsed = JSON.parse(event.data);
-                if (parsed.type === "levelData") {
-                    socket.removeEventListener("message", onMessage);
-                    resolve(parsed.level);
-                }
-            };
-            socket.addEventListener("message", onMessage);
-            setTimeout(() => {
-                socket.removeEventListener("message", onMessage);
-                reject(new Error("Timeout waiting for level data"));
-            }, LEVEL_DATA_TIMEOUT);
-        } else {
-            reject(new Error("Socket is not open"));
-        }
-    });
+
+var eventSheet = {
+    15: handlePlayerData,
+    7: handleLevelData
 }
 
-function handleMessages(event) {
-    var base91 = new Base91()
-    var encodedData = base91.decode(event.data, "bytes");
+function handleLevelData(compressedData) {
 
-    const numPlayers = encodedData[0];
-  
-    const playerData = [];
-    for (let i = 0; i < numPlayers; i++) {
-        const startIndex = 1 + i * 4;
-        const int1 = (encodedData[startIndex] << 8) + encodedData[startIndex + 1];
-        const int2 = (encodedData[startIndex + 2] << 8) + encodedData[startIndex + 3];
-        playerData.push({ int1, int2 });
+    const numBitsPerRow = compressedData[1];
+    
+    compressedData = compressedData.slice(2); 
+
+    const decompressedData = [];
+    let row = [];
+
+    for (const byte of compressedData) {
+        const binaryString = byte.toString(2).padStart(8, '0'); 
+
+        const bits = binaryString.split('').map(bit => parseInt(bit)); 
+
+        row.push(...bits); 
+
+        while (row.length >= numBitsPerRow) {
+            decompressedData.push(row.slice(0, numBitsPerRow));
+            row = row.slice(numBitsPerRow);
+        }
     }
-  
-    const uuid = String.fromCharCode.apply(null, encodedData.subarray(1 + numPlayers * 4));
-  
-    console.log("Decoded Number of Players: " + numPlayers);
-    console.log("Decoded Player Data: " + JSON.stringify(playerData));
-    console.log("Decoded UUID: " + uuid);
+
+    self.postMessage({type: "level", level: decompressedData});
+}
+
+
+
+
+
+function handlePlayerData(data) {
+    var players = { count: data[1], data: [], ping: ping1, type: "data" };
+    var totalplayerdata = [];
+    var uuid = data.slice(-4);
+
+    var playerByteAmount = data[1] * 4;
+
+    for (let i = 2, playerIndex = 0; i < 2 + playerByteAmount; i += 4, playerIndex++) {
+        var x = (data[i] << 8) | data[i + 1];
+        var y = (data[i + 2] << 8) | data[i + 3];
+
+        totalplayerdata.push({ x: x, y: y, uuid: playerIndex === data[1] - 1 ? uuid : 0 });
+    }
+
+    players.data = totalplayerdata;
+    self.postMessage(players)
+}
+
+
+function handleMessages(event) {
+    const latin1String = event.data
+    const latin1Array = new Uint8Array(latin1String.length);
+    for (let i = 0; i < latin1String.length; i++) {
+        latin1Array[i] = latin1String.charCodeAt(i);
+    }
+    var dataType = latin1Array[0]
+    for (const [key, value] of Object.entries(eventSheet)) {
+        if (dataType == key) {
+            value(latin1Array)
+        }
+    }
 }
 
 
@@ -135,7 +179,14 @@ self.addEventListener('message', (event) => {
     } else if (data.type === "d") {
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.onclose = () => { };
-            socket.send(JSON.stringify({ uuid: playerUUID, type: "disconnect" }));
+            var disconnect = new Uint8Array(5);
+            var asd = new $BOOLBYTE();
+            asd.set(0, true);
+            disconnect[0] = asd.uint[0];
+            for (let i = 0; i < playerUUID.length; i++) {
+                disconnect[i + 1] = playerUUID[i];
+            }
+            socket.send(disconnect);
             socket.close();
         }
     } else if (data.type === "k") {
@@ -144,6 +195,8 @@ self.addEventListener('message', (event) => {
             newKeypress.set(i, data.k[i] == "1" ? true : false);
         }
         keypress = newKeypress;
+    } else if (data.type === "g") {
+        shouldPoll = true;
     }
 });
 
@@ -160,7 +213,7 @@ function generate4ByteUUID() {
 function hexToBinary(hexString) {
     const decimalValue = parseInt(hexString, 16);
 
-    const binaryString = decimalValue.toString(2).padStart(32, '0'); // 32 bits for a 4-byte UUID
+    const binaryString = decimalValue.toString(2).padStart(32, '0');
 
     return binaryString;
 }
@@ -178,6 +231,6 @@ function binaryStringToUint8Array(binaryString) {
 }
 
 setInterval(() => {
-    self.postMessage({ "type": "keypresses" })
+    shouldPoll ? self.postMessage({ "type": "keypresses" }) : null;
     getPlayerData()
 }, 1000 / 60)
