@@ -1,6 +1,7 @@
 import { currentPlayer, renderBoxes, renderPlayers } from "./render.js";
 import { boxes } from "./mapping.js"
-import { playerData, sendMoveData, ping1 } from "./worker_handler.js";
+import { playerData, ping1 } from "./worker_handler.js";
+import { $BOOLBYTE }  from "./boolbyte.js";
 export var x = Math.floor(Math.random() * 1000);
 export var y = Math.floor(Math.random() * 1000);
 export var speed = 1.15;
@@ -9,43 +10,13 @@ export var velocityX = 0;
 export var velocityY = 0;
 export var lastX, lastY, stats, pingPanel;
 
-class $BOOLBYTE {
-    uint = new Uint8Array(new ArrayBuffer(1))
-    constructor() {
-        for (var i = 0; i < 7; i++) {
-            this.uint[0] |= (0 << i)
-        }
-    }
-    set(index, bool) {
-        if (bool) {
-            this.uint[0] |= (1 << index);
-        } else {
-            this.uint[0] &= ~(1 << index);
-        }
-    }
-}
 export var moveDataBinary = new $BOOLBYTE()
-moveDataBinary.set(0, true)
-moveDataBinary.set(1, true)
-moveDataBinary.set(2, false)
-moveDataBinary.set(3, false)
-
-
 export var keypresses = {
     w: false,
     a: false,
     s: false,
     d: false,
 };
-
-export function handleKeypresses() {
-    // if (keypresses.w) velocityY -= speed;
-    // if (keypresses.a) velocityX -= speed;
-    // if (keypresses.s) velocityY += speed;
-    // if (keypresses.d) velocityX += speed;
-    // if (keypresses.w && (keypresses.a || keypresses.d)) { velocityX *= 0.95; velocityY *= 0.95; }
-    // if (keypresses.s && (keypresses.a || keypresses.d)) { velocityX *= 0.95; velocityY *= 0.95; }
-}
 
 export function createEngineWindowEvents() {
     window.onkeydown = function (event) {
@@ -122,8 +93,6 @@ export function gameLoop() {
     if (elapsedTime >= frameInterval) {
         // This limits the movement speed to 60 times a second, so people with higher hertz monitors don't move faster, but letting them render faster
         lastFrameTime = performance.now() - (elapsedTime % frameInterval);
-        handleKeypresses();
-        sendMoveData(moveDataBinary.uint[0])
     }
     try { stats.end() } catch (e) { }
 

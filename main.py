@@ -235,13 +235,7 @@
 
 # asyncio.get_event_loop().run_until_complete(start_server)
 # asyncio.get_event_loop().run_forever()
-import asyncio
-import random
-import websockets
-import math
-import struct
-import json
-import copy
+import asyncio, random, websockets, struct, copy, base91
 
 level = [
     [0, 0, 0, 0, 0, 1, 0, 0, 0],
@@ -256,6 +250,7 @@ RADII = 40
 MAP_WALL_GEOMETRY = RADII * 2
 SPEED = 1.0
 
+
 class Box:
     def __init__(self, x, y, width, height):
         self.x = x
@@ -263,18 +258,10 @@ class Box:
         self.width = width
         self.height = height
 
+
 # Create boxes based on the level configuration
-boxes = [
-    Box(
-        j * MAP_WALL_GEOMETRY,
-        i * MAP_WALL_GEOMETRY,
-        MAP_WALL_GEOMETRY,
-        MAP_WALL_GEOMETRY,
-    )
-    for i, row in enumerate(level)
-    for j, element in enumerate(row)
-    if element == 1
-]
+boxes = [Box(j * MAP_WALL_GEOMETRY,i * MAP_WALL_GEOMETRY,MAP_WALL_GEOMETRY,MAP_WALL_GEOMETRY,)for i, row in enumerate(level) for j, element in enumerate(row) if element == 1 ]
+
 
 async def handler(websocket, path):
     try:
@@ -283,54 +270,91 @@ async def handler(websocket, path):
     except Exception as e:
         print(f"Error: {e}")
 
-async def handleKeypresses(*args, **kwargs):
-    keypress = (args[0][0] & 0xF0) >> 4 
-    binary_keypress = bin(keypress)[2:].zfill(4) 
-    uuid_bytes = args[0][1:5]
-    player_exists = False
-    for player in players:
-        if player["uuid"] == uuid_bytes:
-            player["w"] = True if binary_keypress[3] == "1" else False  
-            player["a"] = True if binary_keypress[2] == "1" else False  
-            player["s"] = True if binary_keypress[1] == "1" else False  
-            player["d"] = True if binary_keypress[0] == "1" else False  
-            player_exists = True
-            break
+players = []  # Assuming you have a global list of players
 
-    if not player_exists:
-        players.append({"uuid": uuid_bytes,"x": random.randint(10, 1000),"y": random.randint(10, 1000),"lastRequest": 0, "w" : False, "a" : False, "s": False, "d": False, "xvel" : 0, "yvel": 0})
+async def handleKeypresses(first_byte, uuid_bytes, *args, **kwargs):
+    try:
+        keypress = (first_byte & 0xF0) >> 4
+        binary_keypress = bin(keypress)[2:].zfill(4)
+        player_exists = False
+        for player in players:
+            if player["uuid"] == uuid_bytes:
+                player["w"] = binary_keypress[3] == "1"
+                player["a"] = binary_keypress[2] == "1"
+                player["s"] = binary_keypress[1] == "1"
+                player["d"] = binary_keypress[0] == "1"
+                player_exists = True
+                break
+
+        if not player_exists:
+            players.append({"uuid": uuid_bytes,"x": random.randint(10, 1000),"y": random.randint(10, 1000),"lastRequest": 0,"w": False,"a": False,"s": False,"d": False,"xvel": 0,"yvel": 0,})
+    except Exception as e:
+        print(f"Error in handleKeypresses: {e}")
+
+
+def playerXYOverflowHandler():
+    for player in players:
+        if player["x"] > 65535: player["x"] = 0
+        if player["x"] < 0: player["x"] = 65535
+        if player["y"] > 65535: player["y"] = 0
+        if player["y"] < 0: player["y"] = 65535
+
+def compressPlayerData(uuid_bytes, players):
+    try:
+        data = bytearray()
+        num_players = len(players)
+        data.extend(struct.pack('!B', num_players))
+        playerXYOverflowHandler()
+        for player in players:
+            data.extend(struct.pack('!H', round(player['x'])))
+            data.extend(struct.pack('!H', round(player['y'])))
+        
+        data.extend(uuid_bytes)
+        encoded_data = base91.encode(data)
+        return encoded_data
+    except Exception:
+        return None
+
 
 async def handleGetData(*args, **kwargs):
-    player_uuid = args[0][1:5]
-    if player_uuid:
-        copy_of_players = copy.deepcopy(players)
-        for player in copy_of_players:
-            del player["lastRequest"], player["w"], player["a"], player["s"], player["d"], player["xvel"], player["yvel"]
-            player["x"] = round(player["x"], 1)
-            player["y"] = round(player["y"], 1)
-            if player["uuid"] != player_uuid:
-                player["uuid"] = 0
-        
-        await args[1].send(json.dumps({"type": "p", "p": copy_of_players}))
+    try:
+        player_uuid = args[0][1:5]
+        await handleKeypresses(args[0][0], player_uuid)
+        if player_uuid:
+            copy_of_players = copy.deepcopy(players)
+            for player in copy_of_players:
+                del player["lastRequest"], player["w"], player["a"], player["s"], player["d"], player["xvel"], player["yvel"], player["uuid"]
+                player["x"] = round(player["x"], 1)
+                player["y"] = round(player["y"], 1)
+            
+            compressed_data = compressPlayerData(player_uuid, copy_of_players)
+            if compressed_data:
+                await args[1].send(compressed_data)
+    except Exception as e:
+        print(f"Error in handleGetData: {e}")
 
-mappings = {
-    3: handleKeypresses,
-    15: handleGetData
-}
+
+
+mappings = {15: handleGetData}
+
 
 async def handleBinary(data, websocket):
     try:
         data_type = data[0] & 0x0F
         if data_type in mappings:
             await mappings[data_type](data, websocket)
+    except Exception:
+        None
 
-    except Exception as e:
-        print(f"Error handling binary data: {e}")
 
 async def periodic_update():
     while True:
-        await asyncio.sleep(1/60)  # Adjust the interval as needed
-        updatePlayerVelocities()
+        try:
+            await asyncio.sleep(1 / 60)
+            updatePlayerVelocities()
+        except Exception as e:
+            print(f"Error in periodic_update: {e}")
+
 
 key_actions = {
     "a": lambda player: player.update({"xvel": player["xvel"] - SPEED}),
@@ -338,6 +362,8 @@ key_actions = {
     "w": lambda player: player.update({"yvel": player["yvel"] - SPEED}),
     "s": lambda player: player.update({"yvel": player["yvel"] + SPEED}),
 }
+
+
 def apply_traction(player):
     player["xvel"] *= 0.8
     player["yvel"] *= 0.8
@@ -345,9 +371,12 @@ def apply_traction(player):
         player["xvel"] = 0
     if abs(player["yvel"]) < 0.01:
         player["yvel"] = 0
-        
     player["x"] += player["xvel"]
     player["y"] += player["yvel"]
+    player["x"] = round(player["x"], 2)
+    player["y"] = round(player["y"], 2)
+    playerXYOverflowHandler()
+
 
 def updatePlayerVelocities():
     for player in players:
@@ -357,15 +386,13 @@ def updatePlayerVelocities():
         apply_traction(player)
 
 async def start_server():
-    await websockets.serve(handler, "0.0.0.0", 8000)
+    async with websockets.serve(handler, "0.0.0.0", 8000):
+        await asyncio.Future()  # Run forever
+
 
 async def main():
-    await asyncio.gather(
-        start_server(),
-        periodic_update()
-    )
+    await asyncio.gather(start_server(), periodic_update())
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

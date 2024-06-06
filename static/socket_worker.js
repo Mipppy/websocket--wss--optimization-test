@@ -1,28 +1,12 @@
+import { $BOOLBYTE } from "./boolbyte.js";
+import { Base64, Base91 } from "./libs/base-ex.esm.min.js"
 let socket;
-const pingInterval = 20;
 const playerUUID = generate4ByteUUID();
 let pingStartTime = 0;
 let ping1 = 0;
 const LEVEL_DATA_TIMEOUT = 5000;
 var fullMoveBinarySend = new Uint8Array(5)
-
-class $BOOLBYTE {
-    uint = new Uint8Array(new ArrayBuffer(1))
-    constructor () {
-        for (var i = 0; i < 7; i++) {
-            this.uint[0] |= (0 << i) 
-        }
-    }
-    set(index, bool) {
-        if (bool) {
-            this.uint[0] |= (1 << index);
-        } else {
-            this.uint[0] &= ~(1 << index);
-        }
-    }
-  }
-  
-
+var keypress = []
 
 postMessage({ type: "uuid", uuid: playerUUID });
 
@@ -53,15 +37,19 @@ function initWebSocket(url) {
     }
 }
 
+
 function getPlayerData() {
     if (socket && socket.readyState === WebSocket.OPEN) {
-        var da = new Uint8Array(5)
+        var da = new Uint8Array(5);
         var asd = new $BOOLBYTE();
-        asd.set(0, true)
-        asd.set(1, true)
-        asd.set(2, true)
-        asd.set(3, true)
-        da[0] = asd.uint[0]
+
+        asd.toggleToMatch(keypress);
+
+        asd.set(0, true);
+        asd.set(1, true);
+        asd.set(2, true);
+        asd.set(3, true);
+        da[0] = asd.uint[0];
         for (let i = 0; i < playerUUID.length; i++) {
             da[i + 1] = playerUUID[i];
         }
@@ -113,24 +101,28 @@ async function getLevelData() {
 }
 
 function handleMessages(event) {
-    const parsed = JSON.parse(event.data);
+    var base91 = new Base91()
+    var encodedData = base91.decode(event.data, "bytes");
 
-    if (parsed.type === "p") {
-        ping1 = Date.now() - pingStartTime;
-        postMessage({ type: 'data', data: parsed.p, ping: ping1 });
-        getPlayerData()
-
-    } else if (parsed.type === "c") {
-        postMessage({ type: "playerCount", count: parsed.count });
+    const numPlayers = encodedData[0];
+  
+    const playerData = [];
+    for (let i = 0; i < numPlayers; i++) {
+        const startIndex = 1 + i * 4;
+        const int1 = (encodedData[startIndex] << 8) + encodedData[startIndex + 1];
+        const int2 = (encodedData[startIndex + 2] << 8) + encodedData[startIndex + 3];
+        playerData.push({ int1, int2 });
     }
-
+  
+    const uuid = String.fromCharCode.apply(null, encodedData.subarray(1 + numPlayers * 4));
+  
+    console.log("Decoded Number of Players: " + numPlayers);
+    console.log("Decoded Player Data: " + JSON.stringify(playerData));
+    console.log("Decoded UUID: " + uuid);
 }
 
-setInterval(() => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "playerCount" }));
-    }
-}, 1000);
+
+
 
 self.addEventListener('message', (event) => {
     const data = event.data;
@@ -146,6 +138,12 @@ self.addEventListener('message', (event) => {
             socket.send(JSON.stringify({ uuid: playerUUID, type: "disconnect" }));
             socket.close();
         }
+    } else if (data.type === "k") {
+        const newKeypress = new $BOOLBYTE();
+        for (let i = 0; i < data.k.length; i++) {
+            newKeypress.set(i, data.k[i] == "1" ? true : false);
+        }
+        keypress = newKeypress;
     }
 });
 
@@ -172,10 +170,14 @@ function binaryStringToUint8Array(binaryString) {
 
     for (let i = 0; i < 4; i++) {
         const byteString = binaryString.substring(i * 8, (i + 1) * 8);
-        
+
         uint8Array[i] = parseInt(byteString, 2);
     }
 
     return uint8Array;
 }
 
+setInterval(() => {
+    self.postMessage({ "type": "keypresses" })
+    getPlayerData()
+}, 1000 / 60)
